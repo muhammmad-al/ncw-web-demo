@@ -82,7 +82,7 @@ export interface IAppState {
   generateNewDeviceId: () => Promise<void>;
   generateMPCKeys: () => Promise<void>;
   stopMpcDeviceSetup: () => Promise<void>;
-  createTransaction: (dataToSend?: INewTransactionData) => Promise<void>;
+  createTransaction: (dataToSend?: INewTransactionData) => Promise<ITransactionData>;
   cancelTransaction: (txId: string) => Promise<void>;
   signTransaction: (txId: string) => Promise<void>;
   takeover: () => Promise<IFullKey[]>;

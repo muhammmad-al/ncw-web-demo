@@ -32,3 +32,4 @@ cpp/build/
 
 /public/wasm/cosigner
 public/wasm/cosigner.js
+.env

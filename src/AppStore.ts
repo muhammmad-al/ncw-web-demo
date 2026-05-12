@@ -418,6 +418,7 @@ export const useAppStore = create<IAppState>()((set, get) => {
       const newTxData = await apiService.createTransaction(deviceId, dataToSend);
       const txs = updateOrAddTx(get().txs, newTxData);
       set((state) => ({ ...state, txs }));
+      return newTxData;
     },
     cancelTransaction: async (txId: string) => {
       if (!apiService) {

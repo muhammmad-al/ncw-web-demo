@@ -9,6 +9,7 @@ import { Web3 } from "./Web3";
 import { useAppStore } from "../AppStore";
 import { JoinExistingWallet } from "./JoinExistingWallet";
 import { Logs } from "./Logs";
+import { MigrationFlow } from "./MigrationFlow";
 
 export const FireblocksNCWExampleActions: React.FC = () => {
   const { keysStatus, joinExistingWalletMode } = useAppStore();
@@ -27,6 +28,7 @@ export const FireblocksNCWExampleActions: React.FC = () => {
           <Transactions />
           <Web3 />
           <Takeover />
+          <MigrationFlow />
           <Logs />
         </>
       )}

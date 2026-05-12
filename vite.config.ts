@@ -7,6 +7,10 @@ export default defineConfig(({ command, mode }) => {
   return {
     base: "/ncw-web-demo/",
     plugins: [react(), splitVendorChunkPlugin()],
+    define: {
+      "process.env": {},
+      global: "globalThis",
+    },
     server: {
       open: env.VITE_OPEN !== 'false',
       host: 'localhost',
@@ -15,6 +19,9 @@ export default defineConfig(({ command, mode }) => {
     },
     optimizeDeps: {
       exclude: ["@fireblocks/ncw-js-sdk", "tsl-apple-cloudkit"],
+      esbuildOptions: {
+        target: "esnext",
+      },
     },
   }
 });

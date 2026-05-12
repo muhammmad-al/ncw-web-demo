@@ -4,6 +4,7 @@ interface ImportMetaEnv {
   readonly VITE_AUTOMATE_INITIALIZATION?: string;
   readonly VITE_NCW_SDK_ENV?: string;
   readonly VITE_BACKEND_BASE_URL: string;
+  readonly VITE_DYNAMIC_ENVIRONMENT_ID: string;
 }
 
 interface ImportMeta {

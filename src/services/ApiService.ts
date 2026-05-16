@@ -330,6 +330,34 @@ export class ApiService {
     return await response.json();
   }
 
+  // ----- Key migration (Fireblocks NCW -> Dynamic WaaS) -----
+  // Audit-only. Private key material never leaves the browser; the backend
+  // records intent + outcome (addresses) for the migration ledger.
+  public async startKeyMigration(walletId: string, assetId: string): Promise<{
+    migrationId: string;
+    startedAt: string;
+  }> {
+    return await this._postCall(`api/migration/start`, { walletId, assetId });
+  }
+
+  public async completeKeyMigration(
+    migrationId: string,
+    fireblocksAddress: string,
+    dynamicAddress: string,
+  ): Promise<{
+    migrationId: string;
+    completedAt: string;
+    fireblocksAddress: string;
+    dynamicAddress: string;
+    addressesMatch: boolean;
+  }> {
+    return await this._postCall(`api/migration/complete`, {
+      migrationId,
+      fireblocksAddress,
+      dynamicAddress,
+    });
+  }
+
   public listenToTxs(deviceId: string, cb: TTxHandler): () => void {
     let subscriptions = this._deviceTxsSubscriptions.get(deviceId);
     if (!subscriptions) {

@@ -556,6 +556,22 @@ export const useAppStore = create<IAppState>()((set, get) => {
       }
       return fireblocksNCW.takeover();
     },
+    startKeyMigration: async (walletId: string, assetId: string) => {
+      if (!apiService) {
+        throw new Error("apiService is not initialized");
+      }
+      return apiService.startKeyMigration(walletId, assetId);
+    },
+    completeKeyMigration: async (
+      migrationId: string,
+      fireblocksAddress: string,
+      dynamicAddress: string,
+    ) => {
+      if (!apiService) {
+        throw new Error("apiService is not initialized");
+      }
+      return apiService.completeKeyMigration(migrationId, fireblocksAddress, dynamicAddress);
+    },
     exportFullKeys: (chainCode: string, cloudKeyShares: Map<string, string[]>) => {
       if (!fireblocksNCW) {
         throw new Error("fireblocksNCW is not initialized");

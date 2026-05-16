@@ -86,6 +86,18 @@ export interface IAppState {
   cancelTransaction: (txId: string) => Promise<void>;
   signTransaction: (txId: string) => Promise<void>;
   takeover: () => Promise<IFullKey[]>;
+  startKeyMigration: (walletId: string, assetId: string) => Promise<{ migrationId: string; startedAt: string }>;
+  completeKeyMigration: (
+    migrationId: string,
+    fireblocksAddress: string,
+    dynamicAddress: string,
+  ) => Promise<{
+    migrationId: string;
+    completedAt: string;
+    fireblocksAddress: string;
+    dynamicAddress: string;
+    addressesMatch: boolean;
+  }>;
   exportFullKeys: (chainCode: string, cloudKeyShares: Map<string, string[]>) => Promise<IFullKey[]>;
   deriveAssetKey: (
     extendedPrivateKey: string,

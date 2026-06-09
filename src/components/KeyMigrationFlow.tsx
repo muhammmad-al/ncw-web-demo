@@ -1,11 +1,11 @@
-// FOR SECURITY RESEARCH ONLY — NOT FOR PRODUCTION USE
+// Proof of concept — demonstrates the migration model; not production-hardened.
 //
 // End-to-end key migration: Fireblocks NCW (Full Key Takeover, client-side via
-// the NCW JS SDK) -> Dynamic WaaS (importPrivateKey, splits into MPC shares).
+// the NCW JS SDK) -> Dynamic WaaS (importPrivateKey, re-splits into MPC shares).
 //
 // Private key material lives only in this component's React state and is wiped
-// after a successful Dynamic import. The backend sees the migration intent and
-// the final addresses, never the key itself.
+// after a successful Dynamic import. The backend only ever sees the migration
+// intent and the resulting addresses, never the key itself.
 import React from "react";
 import {
   ChainEnum,
@@ -14,7 +14,6 @@ import {
   useIsLoggedIn,
   useUserWallets,
 } from "@dynamic-labs/sdk-react-core";
-import type { IFullKey } from "@fireblocks/ncw-js-sdk";
 import { Card, ICardAction } from "./ui/Card";
 import { useAppStore } from "../AppStore";
 
@@ -23,15 +22,9 @@ const ACCOUNT_ID = 0;
 const SEPOLIA_COIN_TYPE = 1; // BIP44 testnet
 const VERIFY_MESSAGE = "Fireblocks → Dynamic key migration verification";
 
-const shortAddr = (addr: string | undefined | null) =>
-  addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : "—";
-
-const shortKey = (k: string | null) =>
-  k ? `${k.slice(0, 6)}…${k.slice(-4)} (${k.length} chars)` : "—";
-
 export const KeyMigrationFlow: React.FC = () => {
-  const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
-  const { importPrivateKey } = useDynamicWaas();
+  const { setShowAuthFlow, handleLogOut } = useDynamicContext();
+  const { importPrivateKey, getWaasWallets } = useDynamicWaas();
   const userWallets = useUserWallets();
   const isLoggedIn = useIsLoggedIn();
   const {
@@ -45,7 +38,6 @@ export const KeyMigrationFlow: React.FC = () => {
 
   const [migrationId, setMigrationId] = React.useState<string | null>(null);
   const [exportedKey, setExportedKey] = React.useState<string | null>(null);
-  const [exportedEcdsaKey, setExportedEcdsaKey] = React.useState<IFullKey | null>(null);
   const [exporting, setExporting] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
   const [verifying, setVerifying] = React.useState(false);
@@ -58,20 +50,14 @@ export const KeyMigrationFlow: React.FC = () => {
     migrationId: string;
     fireblocksAddress: string;
   } | null>(null);
+  const [matchTick, setMatchTick] = React.useState(0);
   const [awaitingAuth, setAwaitingAuth] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const fireblocksAddress =
     (accounts[ACCOUNT_ID]?.[SEPOLIA_ASSET_ID]?.address as { address?: string } | undefined)
       ?.address ?? null;
-  // Only ever surface the imported wallet here. `primaryWallet` may point at a
-  // wallet created by the sibling sweep flow (different address), which would
-  // make the destination row misleading. Show nothing until import lands.
   const dynamicAddress = importedAddress;
-  const addressesMatch =
-    !!fireblocksAddress &&
-    !!dynamicAddress &&
-    fireblocksAddress.toLowerCase() === dynamicAddress.toLowerCase();
 
   const handleExport = async () => {
     setError(null);
@@ -105,10 +91,8 @@ export const KeyMigrationFlow: React.FC = () => {
         0,
         0,
       );
-      setExportedEcdsaKey(ecdsa);
       setExportedKey(assetKey);
     } catch (e) {
-      console.log("[KeyMigrationFlow] export failed", e);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setExporting(false);
@@ -125,15 +109,15 @@ export const KeyMigrationFlow: React.FC = () => {
         privateKey: pk,
         addressType: "Ethereum",
       });
-      // Defer the wallet-match + server ack to a useEffect that watches the
-      // reactive `userWallets` array — the SDK updates it via context after
-      // the import settles, so we react instead of polling.
-      setPendingMatch({ migrationId, fireblocksAddress });
-      // Zeroize key material in component state — import has consumed it.
+      // Import has consumed the key — wipe it from component state.
       setExportedKey(null);
-      setExportedEcdsaKey(null);
+      // Hand off to the matcher effect below. It watches the reactive
+      // `useUserWallets()` list — an imported key surfaces there (usually
+      // within seconds once Dynamic refreshes the session) — and also re-polls
+      // `getWaasWallets()` on a ticker as a fallback, completing the migration
+      // once the imported wallet appears.
+      setPendingMatch({ migrationId, fireblocksAddress });
     } catch (e) {
-      console.log("[KeyMigrationFlow] import failed", e);
       const msg = e instanceof Error ? e.message : String(e);
       // Dynamic returns `WalletApiError: Authorization header or cookie is
       // required` when the WaaS session has gone stale even though
@@ -193,12 +177,15 @@ export const KeyMigrationFlow: React.FC = () => {
     runImport();
   }, [awaitingAuth, isLoggedIn, runImport]);
 
-  // Reactive wallet-match: when the imported wallet appears in `userWallets`,
-  // record the address and call the backend completion endpoint exactly once.
+  // Matcher: once an import is pending, look for the imported wallet across
+  // both the reactive `useUserWallets()` list (fast path — re-runs this effect
+  // whenever it updates) and `getWaasWallets()` (fallback, re-checked by the
+  // ticker below). When it appears, record the address and call the backend
+  // completion endpoint exactly once.
   React.useEffect(() => {
     if (!pendingMatch) return;
     const target = pendingMatch.fireblocksAddress.toLowerCase();
-    const matched = userWallets.find(
+    const matched = [...getWaasWallets(), ...userWallets].find(
       (w) => typeof w.address === "string" && w.address.toLowerCase() === target,
     );
     if (!matched?.address) return;
@@ -209,27 +196,36 @@ export const KeyMigrationFlow: React.FC = () => {
     completeKeyMigration(mid, fba, newDynamicAddress)
       .then((ack) => setServerAck({ addressesMatch: ack.addressesMatch }))
       .catch((e) => {
-        console.log("[KeyMigrationFlow] completeKeyMigration failed", e);
         setError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => setImporting(false));
-  }, [pendingMatch, userWallets, completeKeyMigration]);
+  }, [pendingMatch, userWallets, matchTick, getWaasWallets, completeKeyMigration]);
+
+  // Ticker: re-run the matcher every 1.5s while a match is pending, so the
+  // `getWaasWallets()` fallback gets re-polled even if `userWallets` doesn't
+  // change reference.
+  React.useEffect(() => {
+    if (!pendingMatch) return;
+    const iv = setInterval(() => setMatchTick((t) => t + 1), 1500);
+    return () => clearInterval(iv);
+  }, [pendingMatch]);
 
   // Timeout fallback so we don't sit on `importing` forever if the wallet
-  // never propagates (10s grace period).
+  // never propagates (60s grace period).
   React.useEffect(() => {
     if (!pendingMatch) return;
     const t = setTimeout(() => {
       setPendingMatch((cur) => {
         if (cur) {
           setError(
-            "Import succeeded but no Dynamic wallet appeared in 10s — refresh the page; the wallet may already be in your Dynamic dashboard.",
+            "Imported, but the new Dynamic wallet didn't appear within 60s — refresh the page; " +
+              "it may already be in your Dynamic dashboard, then use Verify Ownership.",
           );
           setImporting(false);
         }
         return null;
       });
-    }, 10_000);
+    }, 60_000);
     return () => clearTimeout(t);
   }, [pendingMatch]);
 
@@ -240,9 +236,13 @@ export const KeyMigrationFlow: React.FC = () => {
       return;
     }
     const target = importedAddress.toLowerCase();
-    const wallet = userWallets.find(
-      (w) => typeof w.address === "string" && w.address.toLowerCase() === target,
-    );
+    const wallet =
+      getWaasWallets().find(
+        (w) => typeof w.address === "string" && w.address.toLowerCase() === target,
+      ) ??
+      userWallets.find(
+        (w) => typeof w.address === "string" && w.address.toLowerCase() === target,
+      );
     if (!wallet) {
       setError("Imported wallet not found in Dynamic WaaS wallet list.");
       return;
@@ -257,7 +257,6 @@ export const KeyMigrationFlow: React.FC = () => {
       if (!sig) throw new Error("No signature returned");
       setVerificationSig(sig);
     } catch (e) {
-      console.log("[KeyMigrationFlow] verify failed", e);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setVerifying(false);
@@ -268,16 +267,13 @@ export const KeyMigrationFlow: React.FC = () => {
     return () => {
       // Best-effort wipe on unmount.
       setExportedKey(null);
-      setExportedEcdsaKey(null);
     };
   }, []);
 
-  const importLabel = !isLoggedIn
-    ? "Sign in & Import Key to Dynamic"
-    : "Import Key to Dynamic";
+  const importLabel = !isLoggedIn ? "Sign in & Import to Dynamic" : "Import to Dynamic";
   const actions: ICardAction[] = [
     {
-      label: exportedKey ? "Re-export Key" : "Export Key from Fireblocks",
+      label: exportedKey ? "Re-export Key" : "Export Key",
       action: handleExport,
       isInProgress: exporting,
       isDisabled: exporting || importing || awaitingAuth,
@@ -290,101 +286,53 @@ export const KeyMigrationFlow: React.FC = () => {
       buttonVariant: "accent",
     },
     {
-      label: verificationSig ? "Re-sign Verification" : "Verify by Signing",
+      label: verificationSig ? "Re-verify" : "Verify Ownership",
       action: handleVerify,
       isInProgress: verifying,
       isDisabled: !dynamicAddress || !serverAck || verifying,
     },
   ];
 
+  // Single-line status indicator.
+  const status = verificationSig
+    ? "Verified ✓"
+    : serverAck
+      ? serverAck.addressesMatch
+        ? "Imported ✓"
+        : "Address mismatch"
+      : importedAddress
+        ? "Imported ✓"
+        : importing || awaitingAuth
+          ? "Importing…"
+          : exportedKey
+            ? "Exported ✓"
+            : exporting
+              ? "Exporting…"
+              : "Ready";
+  const statusClass =
+    status === "Address mismatch"
+      ? "text-error"
+      : status.endsWith("✓")
+        ? "text-success"
+        : "opacity-70";
+
   return (
-    <Card title="Key Migration (Fireblocks → Dynamic)" actions={actions}>
-      <div className="text-sm space-y-3">
-        <p className="text-xs opacity-60">
-          Exports the secp256k1 private key for {SEPOLIA_ASSET_ID} via Fireblocks Full Key
-          Takeover (client-side), then imports it into Dynamic WaaS so the resulting wallet
-          shares the same address. No on-chain transfer.
-        </p>
-
-        <div className="space-y-1">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-xs uppercase tracking-widest opacity-50">Fireblocks NCW</span>
-            {fireblocksAddress && <span className="text-xs text-success">✓ source</span>}
-          </div>
-          <p className="font-mono text-xs">
-            {fireblocksAddress ?? "— fetch balance/address first —"}
-          </p>
+    <Card title="Key Migration: Fireblocks → Dynamic" actions={actions}>
+      <div className="text-sm space-y-2">
+        <div className="flex items-baseline justify-between gap-2 flex-wrap">
+          <span className="text-xs uppercase tracking-widest opacity-50">
+            Source (Fireblocks)
+          </span>
+          <span className="font-mono text-xs">{fireblocksAddress ?? "Not available"}</span>
         </div>
-
-        <div className="space-y-1">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-xs uppercase tracking-widest opacity-50">Exported key</span>
-            {exportedKey && <span className="text-xs text-warning">in-memory only</span>}
-            {!exportedKey && serverAck && (
-              <span className="text-xs text-success">✓ wiped after import</span>
-            )}
-          </div>
-          <p className="font-mono text-xs opacity-70">
-            {exportedEcdsaKey
-              ? `keyId ${exportedEcdsaKey.keyId.slice(0, 8)}… · `
-              : ""}
-            {shortKey(exportedKey)}
-          </p>
+        <div className="flex items-baseline justify-between gap-2 flex-wrap">
+          <span className="text-xs uppercase tracking-widest opacity-50">Target (Dynamic)</span>
+          <span className="font-mono text-xs">{dynamicAddress ?? "Not yet imported"}</span>
         </div>
-
-        <div className="space-y-1">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-xs uppercase tracking-widest opacity-50">
-              Dynamic WaaS (imported)
-            </span>
-            {dynamicAddress && <span className="text-xs text-success">✓ destination</span>}
-          </div>
-          <p className="font-mono text-xs">
-            {dynamicAddress ??
-              (awaitingAuth
-                ? "— complete Dynamic sign-in to continue —"
-                : "— click Import Key (sign-in is triggered automatically) —")}
-          </p>
-          {!dynamicAddress && primaryWallet?.address && (
-            <p className="text-[10px] opacity-50 italic">
-              Note: {shortAddr(primaryWallet.address)} is from the sibling
-              sweep-flow card and is unrelated to this import.
-            </p>
-          )}
+        <div className="flex items-baseline justify-between gap-2 flex-wrap">
+          <span className="text-xs uppercase tracking-widest opacity-50">Status</span>
+          <span className={`text-xs ${statusClass}`}>{status}</span>
         </div>
-
-        {serverAck && (
-          <p
-            className={`text-xs ${
-              serverAck.addressesMatch ? "text-success" : "text-error"
-            }`}
-          >
-            {serverAck.addressesMatch
-              ? "✓ Server confirmed addresses match — same wallet, new MPC backing."
-              : "✗ Server reports address mismatch — review derivation path."}
-          </p>
-        )}
-
-        {!serverAck && fireblocksAddress && dynamicAddress && (
-          <p className="text-xs opacity-60">
-            Client comparison:{" "}
-            <span className={addressesMatch ? "text-success" : "text-error"}>
-              {addressesMatch ? "match" : "no match"}
-            </span>
-          </p>
-        )}
-
-        {verificationSig && (
-          <div className="space-y-1">
-            <span className="text-xs uppercase tracking-widest opacity-50 text-success">
-              ✓ Signed via Dynamic
-            </span>
-            <p className="font-mono text-xs opacity-70">
-              {verificationSig.slice(0, 18)}…{verificationSig.slice(-10)}
-            </p>
-          </div>
-        )}
-
         {error && <p className="text-error text-xs">Error: {error}</p>}
       </div>
     </Card>

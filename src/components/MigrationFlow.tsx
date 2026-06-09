@@ -104,9 +104,8 @@ export const MigrationFlow: React.FC = () => {
       setProgress(`Sweep status: ${sweepStatus}`);
       if (sweepStatus === "PENDING_SIGNATURE" && signTriggeredRef.current !== sweepTxId) {
         signTriggeredRef.current = sweepTxId;
-        console.log("[MigrationFlow] auto-triggering signTransaction for", sweepTxId);
         signTransaction(sweepTxId).catch((e) => {
-          console.log("[MigrationFlow] signTransaction failed", e);
+          setError(e instanceof Error ? e.message : String(e));
         });
       }
     }
@@ -123,7 +122,6 @@ export const MigrationFlow: React.FC = () => {
     try {
       await createWalletAccount([ChainEnum.Evm]);
     } catch (e) {
-      console.log("[MigrationFlow] createWalletAccount failed", e);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setCreatingWallet(false);
@@ -139,7 +137,6 @@ export const MigrationFlow: React.FC = () => {
         try {
           await addAsset(ACCOUNT_ID, SEPOLIA_ASSET_ID);
         } catch (e) {
-          console.log("[MigrationFlow] addAsset failed", e);
           const msg = e instanceof Error ? e.message : String(e);
           setError(
             `Could not enable ${SEPOLIA_ASSET_ID} in this NCW wallet (${msg}). ` +
@@ -150,7 +147,6 @@ export const MigrationFlow: React.FC = () => {
       }
       await refreshBalance(ACCOUNT_ID, SEPOLIA_ASSET_ID);
     } catch (e) {
-      console.log("[MigrationFlow] fetchBalance failed", e);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setFetchingBalance(false);
@@ -173,14 +169,8 @@ export const MigrationFlow: React.FC = () => {
       if (!signature) {
         throw new Error("No signature returned");
       }
-      console.log("[MigrationFlow] ownership signature", {
-        address: primaryWallet.address,
-        message: OWNERSHIP_MESSAGE,
-        signature,
-      });
       setOwnershipSignature(signature);
     } catch (e) {
-      console.log("[MigrationFlow] signMessage failed", e);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSigningOwnership(false);
@@ -218,7 +208,6 @@ export const MigrationFlow: React.FC = () => {
       setSweepTxId(tx.id);
       setProgress(`Transaction submitted (${tx.id.slice(0, 8)}…). Waiting for signature…`);
     } catch (e) {
-      console.log("[MigrationFlow] createTransaction failed", e);
       setError(e instanceof Error ? e.message : String(e));
       setSweeping(false);
     }
@@ -349,22 +338,6 @@ export const MigrationFlow: React.FC = () => {
         )}
 
         {error && <p className="text-error text-xs">Error: {error}</p>}
-
-        {/* ─── Tiny debug strip ───────────────────────── */}
-        {hasWallet && (() => {
-          const connector = (primaryWallet as unknown as {
-            connector?: { name?: string; key?: string; isEmbeddedWallet?: boolean };
-          })?.connector;
-          const isEmbedded = connector?.isEmbeddedWallet === true;
-          return (
-            <p className="text-[10px] opacity-50 font-mono pt-2 border-t border-base-300 mt-2">
-              {connector?.name ?? "?"} · {connector?.key ?? "?"} · isEmbedded={" "}
-              <span className={isEmbedded ? "text-success" : "text-error"}>
-                {String(isEmbedded)}
-              </span>
-            </p>
-          );
-        })()}
       </div>
     </Card>
   );
